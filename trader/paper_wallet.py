@@ -238,6 +238,7 @@ class PaperWallet:
             "open_positions": len(self.open_positions),
             "days_elapsed": round(days_elapsed, 1),
             "days_remaining": round(days_remaining, 1),
+            "target_days": self.target_days,
             "on_track": daily_growth >= required_daily if days_remaining > 0 else self.balance >= self.target,
         }
 
