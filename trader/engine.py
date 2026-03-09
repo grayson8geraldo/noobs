@@ -17,7 +17,7 @@ import ccxt
 from .candle_analysis import Trend, analyze_candles
 from .exchange import fetch_ohlcv, fetch_price, get_balance, place_market_order, set_leverage
 from .paper_wallet import PaperWallet
-from .risk import PositionPlan, size_position
+from .risk import PositionPlan, RiskProfile, size_position, get_profile, DEFAULT_PROFILE
 from .round_levels import compute_round_levels, nearest_levels
 from .signals import Signal, generate_signals
 
@@ -63,15 +63,14 @@ def run_once(
     exchange: ccxt.Exchange,
     symbols: list[str],
     timeframe: str,
-    risk_pct: float,
-    max_leverage: float,
+    profile: RiskProfile,
     dry_run: bool = True,
     wallet: PaperWallet | None = None,
 ) -> list[TradeResult]:
     """Run a single analysis + trade cycle across all symbols.
 
-    Scans every symbol, collects signals, picks the best one (highest R:R),
-    and executes it.
+    Scans every symbol, collects signals, filters by min R:R from profile,
+    picks the best one, and executes it.
     """
     tf_min = _TF_MINUTES.get(timeframe, 15)
     paper_mode = wallet is not None
@@ -91,7 +90,7 @@ def run_once(
                 log.warning("Failed to check price for %s: %s", pos.symbol, exc)
 
     # 2. Scan all symbols
-    log.info("Scanning %d symbols (TF=%s):", len(symbols), timeframe)
+    log.info("Scanning %d symbols (TF=%s, profile=%s):", len(symbols), timeframe, profile.name)
     all_signals: list[tuple[str, Signal]] = []
 
     for symbol in symbols:
@@ -123,8 +122,9 @@ def run_once(
         log.warning("Zero or negative equity ($%.2f) — cannot trade.", equity)
         return []
 
-    # 4. Rank signals by R:R and pick the best one
+    # 4. Size positions, filter by min R:R from profile
     ranked: list[tuple[str, Signal, PositionPlan]] = []
+    skipped_rr = 0
     for sym, sig in all_signals:
         try:
             plan = size_position(
@@ -132,15 +132,21 @@ def run_once(
                 entry=sig.entry,
                 stop_loss=sig.stop_loss,
                 take_profit=sig.take_profit,
-                risk_pct=risk_pct,
-                max_leverage=max_leverage,
+                risk_pct=profile.risk_pct,
+                max_leverage=profile.max_leverage,
             )
+            if plan.risk_reward < profile.min_rr:
+                skipped_rr += 1
+                continue
             ranked.append((sym, sig, plan))
         except ValueError:
             continue
 
+    if skipped_rr:
+        log.info("Filtered out %d signal(s) with R:R < %.1f", skipped_rr, profile.min_rr)
+
     if not ranked:
-        log.info("No valid position plans.")
+        log.info("No signals pass min R:R filter (%.1f).", profile.min_rr)
         return []
 
     # Sort by risk:reward descending — best trade first
@@ -152,8 +158,9 @@ def run_once(
         best_sym, best_sig.direction, best_plan.risk_reward, best_sig.reason,
     )
     log.info(
-        "Plan: side=%s  qty=%.6f  lev=%.1fx  risk=$%.2f",
-        best_plan.side, best_plan.quantity, best_plan.leverage, best_plan.risk_amount,
+        "Plan: side=%s  qty=%.6f  lev=%.1fx  risk=$%.2f (%.0f%% of $%.2f)",
+        best_plan.side, best_plan.quantity, best_plan.leverage,
+        best_plan.risk_amount, profile.risk_pct, equity,
     )
 
     if len(ranked) > 1:
@@ -201,8 +208,7 @@ def run_loop(
     exchange: ccxt.Exchange,
     symbols: list[str],
     timeframe: str,
-    risk_pct: float,
-    max_leverage: float,
+    profile: RiskProfile,
     dry_run: bool = True,
     wallet: PaperWallet | None = None,
 ) -> None:
@@ -211,13 +217,13 @@ def run_loop(
     paper_mode = wallet is not None
     mode_label = "PAPER" if paper_mode else ("LIVE" if not dry_run else "DRY RUN")
     log.info(
-        "Starting loop — %d symbols  TF=%s  interval=%ds  mode=%s",
-        len(symbols), timeframe, tf_seconds, mode_label,
+        "Starting loop — %d symbols  TF=%s  interval=%ds  mode=%s  profile=%s",
+        len(symbols), timeframe, tf_seconds, mode_label, profile.name,
     )
 
     while True:
         try:
-            run_once(exchange, symbols, timeframe, risk_pct, max_leverage, dry_run, wallet)
+            run_once(exchange, symbols, timeframe, profile, dry_run, wallet)
 
             if paper_mode:
                 wallet.print_dashboard()

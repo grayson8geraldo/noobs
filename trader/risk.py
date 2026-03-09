@@ -8,11 +8,75 @@ Key principles
   first.  We size the position so that if the stop is hit the loss equals
   the allowed risk amount.
 * Hard cap on leverage to prevent liquidation surprises.
+* Risk profiles scale aggression for different deposit sizes and goals.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+
+
+@dataclass
+class RiskProfile:
+    """Pre-configured risk parameters."""
+    name: str
+    risk_pct: float       # % of equity risked per trade
+    max_leverage: float   # hard leverage cap
+    min_rr: float         # minimum risk:reward to take a trade
+    description: str
+
+
+# ── Risk profiles ────────────────────────────────────────────────────────
+# For growing $150 → $1000, "aggressive" or "turbo" are designed.
+#
+# Math for "aggressive" (10% risk, avg R:R 3):
+#   Win $150 * 10% * 3 = $45 profit per winning trade
+#   ~20 winning trades to reach $1000 (with compounding, fewer)
+#   At 60% win rate over 30 days → very achievable
+#
+# Math for "turbo" (15% risk, avg R:R 3):
+#   Win $150 * 15% * 3 = $67.5 profit per winning trade
+#   ~12-15 winning trades to reach $1000
+#   Higher risk of drawdown but faster acceleration
+
+PROFILES = {
+    "conservative": RiskProfile(
+        name="conservative",
+        risk_pct=2.0,
+        max_leverage=5.0,
+        min_rr=2.0,
+        description="Low risk, slow growth. Good for large accounts.",
+    ),
+    "normal": RiskProfile(
+        name="normal",
+        risk_pct=5.0,
+        max_leverage=10.0,
+        min_rr=2.0,
+        description="Balanced risk/reward. Steady compounding.",
+    ),
+    "aggressive": RiskProfile(
+        name="aggressive",
+        risk_pct=10.0,
+        max_leverage=20.0,
+        min_rr=2.5,
+        description="High risk for small deposit acceleration. $150→$1000 target.",
+    ),
+    "turbo": RiskProfile(
+        name="turbo",
+        risk_pct=15.0,
+        max_leverage=25.0,
+        min_rr=3.0,
+        description="Maximum aggression. Fast acceleration or fast blowup.",
+    ),
+}
+
+DEFAULT_PROFILE = "aggressive"
+
+
+def get_profile(name: str) -> RiskProfile:
+    if name not in PROFILES:
+        raise ValueError(f"Unknown profile '{name}'. Options: {', '.join(PROFILES)}")
+    return PROFILES[name]
 
 
 @dataclass
@@ -33,8 +97,8 @@ def size_position(
     entry: float,
     stop_loss: float,
     take_profit: float,
-    risk_pct: float = 2.0,
-    max_leverage: float = 10.0,
+    risk_pct: float = 10.0,
+    max_leverage: float = 20.0,
     fee_pct: float = 0.06,
 ) -> PositionPlan:
     """Calculate position size so that a stop-loss hit = *risk_pct* % of equity.

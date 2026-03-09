@@ -27,6 +27,7 @@ from trader.config import Config
 from trader.exchange import create_exchange
 from trader.engine import run_loop, run_once
 from trader.paper_wallet import PaperWallet
+from trader.risk import get_profile, PROFILES, DEFAULT_PROFILE
 from trader.symbols import resolve_symbols, PRESETS
 
 
@@ -73,17 +74,21 @@ def cmd_paper(args: argparse.Namespace, cfg: Config) -> None:
         cfg.symbols = [args.symbol]
     if args.timeframe:
         cfg.timeframe = args.timeframe
+
+    # Build risk profile
+    profile = get_profile(args.profile or DEFAULT_PROFILE)
     if args.risk:
-        cfg.risk_pct = args.risk
+        profile.risk_pct = args.risk
     if args.leverage:
-        cfg.max_leverage = args.leverage
+        profile.max_leverage = args.leverage
 
     log.info("=== PAPER TRADING MODE ===")
     log.info("Exchange : %s (public data only, no API keys needed)", cfg.exchange_id)
     log.info("Symbols  : %d pairs", len(cfg.symbols))
     log.info("Timeframe: %s", cfg.timeframe)
-    log.info("Risk     : %.1f%%", cfg.risk_pct)
-    log.info("Leverage : max %.0fx", cfg.max_leverage)
+    log.info("Profile  : %s — %s", profile.name.upper(), profile.description)
+    log.info("Risk     : %.1f%% per trade | max %.0fx leverage | min R:R %.1f",
+             profile.risk_pct, profile.max_leverage, profile.min_rr)
     log.info("Balance  : $%.2f → Target: $%.2f in %d days", wallet.balance, wallet.target, wallet.target_days)
 
     # Connect to exchange (public endpoints only)
@@ -94,8 +99,7 @@ def cmd_paper(args: argparse.Namespace, cfg: Config) -> None:
     if args.once:
         results = run_once(
             exchange, cfg.symbols, cfg.timeframe,
-            cfg.risk_pct, cfg.max_leverage,
-            dry_run=True, wallet=wallet,
+            profile, dry_run=True, wallet=wallet,
         )
         wallet.print_dashboard()
         if not results:
@@ -103,8 +107,7 @@ def cmd_paper(args: argparse.Namespace, cfg: Config) -> None:
     else:
         run_loop(
             exchange, cfg.symbols, cfg.timeframe,
-            cfg.risk_pct, cfg.max_leverage,
-            dry_run=True, wallet=wallet,
+            profile, dry_run=True, wallet=wallet,
         )
 
 
@@ -118,18 +121,21 @@ def cmd_trade(args: argparse.Namespace, cfg: Config) -> None:
         cfg.symbols = [args.symbol]
     if args.timeframe:
         cfg.timeframe = args.timeframe
-    if args.risk:
-        cfg.risk_pct = args.risk
-    if args.leverage:
-        cfg.max_leverage = args.leverage
     cfg.dry_run = not args.live
+
+    profile = get_profile(args.profile or "conservative")
+    if args.risk:
+        profile.risk_pct = args.risk
+    if args.leverage:
+        profile.max_leverage = args.leverage
 
     log.info("=== Crypto Futures Trader ===")
     log.info("Exchange : %s", cfg.exchange_id)
     log.info("Symbols  : %d pairs", len(cfg.symbols))
     log.info("Timeframe: %s", cfg.timeframe)
-    log.info("Risk     : %.1f%%", cfg.risk_pct)
-    log.info("Leverage : max %.0fx", cfg.max_leverage)
+    log.info("Profile  : %s — %s", profile.name.upper(), profile.description)
+    log.info("Risk     : %.1f%% per trade | max %.0fx leverage | min R:R %.1f",
+             profile.risk_pct, profile.max_leverage, profile.min_rr)
     log.info("Mode     : %s", "LIVE" if not cfg.dry_run else "DRY RUN")
 
     if cfg.dry_run and (not cfg.api_key or not cfg.api_secret):
@@ -140,7 +146,7 @@ def cmd_trade(args: argparse.Namespace, cfg: Config) -> None:
     if args.once:
         results = run_once(
             exchange, cfg.symbols, cfg.timeframe,
-            cfg.risk_pct, cfg.max_leverage, cfg.dry_run,
+            profile, cfg.dry_run,
         )
         if not results:
             log.info("No signals generated.")
@@ -150,7 +156,7 @@ def cmd_trade(args: argparse.Namespace, cfg: Config) -> None:
     else:
         run_loop(
             exchange, cfg.symbols, cfg.timeframe,
-            cfg.risk_pct, cfg.max_leverage, cfg.dry_run,
+            profile, cfg.dry_run,
         )
 
 
@@ -169,8 +175,10 @@ def main() -> None:
     p_paper.add_argument("--symbol", type=str, help="Trade single pair (e.g. BTC/USDT)")
     p_paper.add_argument("--symbols", type=str, help="Preset or list: all, crypto, top10, stocks, metals, or BTC/USDT,ETH/USDT")
     p_paper.add_argument("--timeframe", type=str, help="Candle timeframe (e.g. 15m, 1h)")
-    p_paper.add_argument("--risk", type=float, help="Risk per trade in %% of equity")
-    p_paper.add_argument("--leverage", type=float, help="Max leverage cap")
+    p_paper.add_argument("--profile", type=str, choices=list(PROFILES.keys()),
+                         help="Risk profile: conservative, normal, aggressive (default), turbo")
+    p_paper.add_argument("--risk", type=float, help="Override risk %% per trade")
+    p_paper.add_argument("--leverage", type=float, help="Override max leverage cap")
     p_paper.add_argument("--once", action="store_true", help="Run one cycle then exit")
     p_paper.add_argument("--status", action="store_true", help="Show dashboard and exit")
     p_paper.add_argument("--reset", action="store_true", help="Reset paper wallet to starting balance")
@@ -183,8 +191,10 @@ def main() -> None:
     p_trade.add_argument("--symbol", type=str, help="Trade single pair (e.g. BTC/USDT)")
     p_trade.add_argument("--symbols", type=str, help="Preset or list: all, crypto, top10, stocks, metals")
     p_trade.add_argument("--timeframe", type=str, help="Candle timeframe (e.g. 15m, 1h)")
-    p_trade.add_argument("--risk", type=float, help="Risk per trade in %% of equity")
-    p_trade.add_argument("--leverage", type=float, help="Max leverage cap")
+    p_trade.add_argument("--profile", type=str, choices=list(PROFILES.keys()),
+                         help="Risk profile: conservative (default for live), normal, aggressive, turbo")
+    p_trade.add_argument("--risk", type=float, help="Override risk %% per trade")
+    p_trade.add_argument("--leverage", type=float, help="Override max leverage cap")
 
     args = parser.parse_args()
 
@@ -204,18 +214,21 @@ def main() -> None:
     else:
         parser.print_help()
         presets_list = ", ".join(PRESETS.keys())
+        profiles_list = ", ".join(PROFILES.keys())
         print("\nExamples:")
-        print("  python main.py paper                        # Scan all (crypto+stocks+metals)")
-        print("  python main.py paper --symbols crypto       # Top 100 crypto only")
-        print("  python main.py paper --symbols top10        # Top 10 crypto only")
-        print("  python main.py paper --symbols stocks       # Stocks only")
-        print("  python main.py paper --symbols metals       # Gold & Silver")
-        print("  python main.py paper --symbols top10,metals # Mix presets")
-        print("  python main.py paper --symbol BTC/USDT      # Single pair")
-        print("  python main.py paper --status               # Check progress")
-        print("  python main.py paper --reset                # Reset wallet")
-        print("  python main.py trade --once                 # Dry-run single cycle")
-        print(f"\nPresets: {presets_list}")
+        print("  python main.py paper                           # Aggressive profile, all symbols")
+        print("  python main.py paper --profile turbo           # Max aggression mode")
+        print("  python main.py paper --symbols crypto          # Top 100 crypto only")
+        print("  python main.py paper --symbols top10,metals    # Mix presets")
+        print("  python main.py paper --status                  # Check progress")
+        print("  python main.py paper --reset                   # Reset wallet")
+        print("  python main.py trade --once --profile normal   # Dry-run single cycle")
+        print(f"\nSymbol presets: {presets_list}")
+        print(f"Risk profiles : {profiles_list}")
+        print("\nProfile details:")
+        for name, p in PROFILES.items():
+            marker = " (default paper)" if name == DEFAULT_PROFILE else ""
+            print(f"  {name:14s}  risk={p.risk_pct:.0f}%  lev={p.max_leverage:.0f}x  min_rr={p.min_rr}  — {p.description}{marker}")
 
 
 if __name__ == "__main__":
