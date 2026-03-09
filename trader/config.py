@@ -17,7 +17,7 @@ class Config:
     api_secret: str = ""
     symbol: str = "BTC/USDT"
     timeframe: str = "15m"
-    deposit: float = 100.0
+    deposit: float = 150.0
     risk_pct: float = 2.0
     max_leverage: float = 10.0
     dry_run: bool = True
@@ -31,7 +31,7 @@ class Config:
             api_secret=os.getenv("EXCHANGE_API_SECRET", ""),
             symbol=os.getenv("SYMBOL", "BTC/USDT"),
             timeframe=os.getenv("TIMEFRAME", "15m"),
-            deposit=float(os.getenv("DEPOSIT", "100")),
+            deposit=float(os.getenv("DEPOSIT", "150")),
             risk_pct=float(os.getenv("RISK_PER_TRADE_PCT", "2")),
             max_leverage=float(os.getenv("MAX_LEVERAGE", "10")),
         )

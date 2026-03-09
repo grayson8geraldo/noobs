@@ -1,5 +1,8 @@
 """
 Thin wrapper around ccxt for fetching OHLCV data and placing futures orders.
+
+Supports a "public-only" mode (no API keys) for paper trading — only market
+data endpoints are called, no authenticated requests.
 """
 
 from __future__ import annotations
@@ -8,15 +11,30 @@ import ccxt
 import pandas as pd
 
 
-def create_exchange(exchange_id: str, api_key: str, api_secret: str) -> ccxt.Exchange:
-    """Instantiate a ccxt exchange with futures enabled."""
+def create_exchange(
+    exchange_id: str,
+    api_key: str = "",
+    api_secret: str = "",
+    public_only: bool = False,
+) -> ccxt.Exchange:
+    """Instantiate a ccxt exchange with futures enabled.
+
+    Parameters
+    ----------
+    public_only : bool
+        If True, skip API keys and only use public endpoints (market data).
+        Useful for paper trading.
+    """
     cls = getattr(ccxt, exchange_id)
-    exchange: ccxt.Exchange = cls({
-        "apiKey": api_key,
-        "secret": api_secret,
+    config: dict = {
         "options": {"defaultType": "future"},
         "enableRateLimit": True,
-    })
+    }
+    if not public_only and api_key and api_secret:
+        config["apiKey"] = api_key
+        config["secret"] = api_secret
+
+    exchange: ccxt.Exchange = cls(config)
     exchange.load_markets()
     return exchange
 
@@ -32,6 +50,12 @@ def fetch_ohlcv(
     df = pd.DataFrame(raw, columns=["timestamp", "open", "high", "low", "close", "volume"])
     df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
     return df
+
+
+def fetch_price(exchange: ccxt.Exchange, symbol: str) -> float:
+    """Fetch latest ticker price (public endpoint, no auth needed)."""
+    ticker = exchange.fetch_ticker(symbol)
+    return float(ticker["last"])
 
 
 def set_leverage(exchange: ccxt.Exchange, symbol: str, leverage: int) -> None:

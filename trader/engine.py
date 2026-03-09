@@ -13,6 +13,7 @@ import ccxt
 
 from .candle_analysis import Trend, analyze_candles
 from .exchange import fetch_ohlcv, get_balance, place_market_order, set_leverage
+from .paper_wallet import PaperWallet
 from .risk import PositionPlan, size_position
 from .round_levels import compute_round_levels, nearest_levels
 from .signals import Signal, generate_signals
@@ -41,6 +42,7 @@ def run_once(
     risk_pct: float,
     max_leverage: float,
     dry_run: bool = True,
+    wallet: PaperWallet | None = None,
 ) -> list[TradeResult]:
     """Run a single analysis + trade cycle.
 
@@ -48,13 +50,23 @@ def run_once(
     ----------
     dry_run : bool
         If True, do NOT place real orders — only log what would happen.
+    wallet : PaperWallet, optional
+        If provided, run in paper-trading mode with virtual balance.
     """
     tf_min = _TF_MINUTES.get(timeframe, 15)
+    paper_mode = wallet is not None
 
-    # 1. Fetch candles
+    # 1. Fetch real candles
     df = fetch_ohlcv(exchange, symbol, timeframe=timeframe, limit=100)
     price = float(df["close"].iloc[-1])
     log.info("Symbol=%s  Price=%.2f  TF=%s", symbol, price, timeframe)
+
+    # 1a. Check open paper positions for SL/TP hits
+    if paper_mode:
+        closed = wallet.check_and_close(price)
+        if closed:
+            for t in closed:
+                log.info("Paper position #%d closed @ %.2f → P&L $%.2f", t.id, t.exit_price, t.pnl)
 
     # 2. Candle trend
     stats = analyze_candles(df)
@@ -81,8 +93,23 @@ def run_once(
         log.info("No trade signal — standing aside.")
         return []
 
-    # 5. Size & (optionally) execute
-    equity = get_balance(exchange) if not dry_run else 100.0
+    # Skip new signals if already in a paper position
+    if paper_mode and wallet.has_open_position:
+        log.info("Paper position already open — skipping new signals.")
+        return []
+
+    # 5. Determine equity
+    if paper_mode:
+        equity = wallet.balance
+    elif not dry_run:
+        equity = get_balance(exchange)
+    else:
+        equity = 100.0
+
+    if equity <= 0:
+        log.warning("Zero or negative equity ($%.2f) — cannot trade.", equity)
+        return []
+
     results: list[TradeResult] = []
 
     for sig in signals:
@@ -103,7 +130,21 @@ def run_once(
 
         order = None
         error = None
-        if not dry_run:
+
+        if paper_mode:
+            # Virtual execution
+            trade = wallet.open_trade(
+                symbol=symbol,
+                side=plan.side,
+                entry_price=sig.entry,
+                quantity=plan.quantity,
+                leverage=plan.leverage,
+                stop_loss=sig.stop_loss,
+                take_profit=sig.take_profit,
+            )
+            order = {"id": f"paper-{trade.id}", "status": "open", "paper": True}
+            log.info("[PAPER] Trade #%d opened. Balance: $%.2f", trade.id, wallet.balance)
+        elif not dry_run:
             try:
                 set_leverage(exchange, symbol, int(plan.leverage))
                 order = place_market_order(
@@ -132,14 +173,25 @@ def run_loop(
     risk_pct: float,
     max_leverage: float,
     dry_run: bool = True,
+    wallet: PaperWallet | None = None,
 ) -> None:
     """Run the trading loop continuously, sleeping between candle closes."""
     tf_seconds = _TF_MINUTES.get(timeframe, 15) * 60
-    log.info("Starting loop — TF=%s  interval=%ds  dry_run=%s", timeframe, tf_seconds, dry_run)
+    paper_mode = wallet is not None
+    mode_label = "PAPER" if paper_mode else ("LIVE" if not dry_run else "DRY RUN")
+    log.info("Starting loop — TF=%s  interval=%ds  mode=%s", timeframe, tf_seconds, mode_label)
 
+    cycle = 0
     while True:
+        cycle += 1
         try:
-            run_once(exchange, symbol, timeframe, risk_pct, max_leverage, dry_run)
+            results = run_once(exchange, symbol, timeframe, risk_pct, max_leverage, dry_run, wallet)
+
+            # Print dashboard every cycle in paper mode
+            if paper_mode:
+                wallet.print_dashboard()
+
         except Exception:
             log.exception("Cycle error")
+
         time.sleep(tf_seconds)
