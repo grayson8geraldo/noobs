@@ -142,11 +142,18 @@ class PaperWallet:
         )
         return trade
 
-    def check_and_close(self, current_price: float, fee_pct: float = 0.06) -> List[PaperTrade]:
-        """Check open positions against current price for SL/TP hits."""
+    def check_and_close(self, current_price: float, fee_pct: float = 0.06, symbol: str | None = None) -> List[PaperTrade]:
+        """Check open positions against current price for SL/TP hits.
+
+        If *symbol* is given, only check positions for that symbol.
+        """
         closed: List[PaperTrade] = []
 
-        for trade in self.open_positions:
+        positions = self.open_positions
+        if symbol:
+            positions = [t for t in positions if t.symbol == symbol]
+
+        for trade in positions:
             hit = None
 
             if trade.side == "long":
