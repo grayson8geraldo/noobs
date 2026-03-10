@@ -94,6 +94,17 @@ CRYPTO_TOP_100 = [
     "XLM/USDT",
     "QNT/USDT",
     "ROSE/USDT",
+    "POL/USDT",     # ex-MATIC
+    "S/USDT",       # ex-FTM (Sonic)
+    "TAO/USDT",
+    "EOS/USDT",
+    "NEO/USDT",
+    "ZEC/USDT",
+    "DASH/USDT",
+    "CFX/USDT",
+    "IOTA/USDT",
+    "MKR/USDT",
+    "PIXEL/USDT",
 ]
 
 # ── Precious Metals ──────────────────────────────────────────────────────
@@ -111,6 +122,25 @@ PRESETS = {
     "top20":      CRYPTO_TOP_100[:20],
     "top50":      CRYPTO_TOP_100[:50],
 }
+
+
+def filter_available(symbols: list[str], exchange) -> list[str]:
+    """Keep only symbols that actually exist on the exchange.
+
+    Logs removed symbols once so the user knows what was dropped.
+    """
+    import logging
+    log = logging.getLogger("trader")
+    available = []
+    removed = []
+    for s in symbols:
+        if s in exchange.markets:
+            available.append(s)
+        else:
+            removed.append(s)
+    if removed:
+        log.warning("Dropped %d symbols not on exchange: %s", len(removed), ", ".join(removed))
+    return available
 
 
 def resolve_symbols(spec: str) -> list[str]:

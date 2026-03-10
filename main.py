@@ -28,7 +28,7 @@ from trader.exchange import create_exchange
 from trader.engine import run_loop, run_once
 from trader.paper_wallet import PaperWallet
 from trader.risk import get_profile, PROFILES, DEFAULT_PROFILE
-from trader.symbols import resolve_symbols, PRESETS
+from trader.symbols import resolve_symbols, filter_available, PRESETS
 
 
 def cmd_paper(args: argparse.Namespace, cfg: Config) -> None:
@@ -94,6 +94,10 @@ def cmd_paper(args: argparse.Namespace, cfg: Config) -> None:
     # Connect to exchange (public endpoints only)
     exchange = create_exchange(cfg.exchange_id, public_only=True)
 
+    # Drop symbols that don't exist on this exchange
+    cfg.symbols = filter_available(cfg.symbols, exchange)
+    log.info("Trading %d verified symbols", len(cfg.symbols))
+
     wallet.print_dashboard()
 
     if args.once:
@@ -142,6 +146,10 @@ def cmd_trade(args: argparse.Namespace, cfg: Config) -> None:
         log.warning("No API keys found — running in dry-run mode with demo data.")
 
     exchange = create_exchange(cfg.exchange_id, cfg.api_key, cfg.api_secret)
+
+    # Drop symbols that don't exist on this exchange
+    cfg.symbols = filter_available(cfg.symbols, exchange)
+    log.info("Trading %d verified symbols", len(cfg.symbols))
 
     if args.once:
         results = run_once(
