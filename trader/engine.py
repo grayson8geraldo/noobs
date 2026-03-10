@@ -2,11 +2,7 @@
 Trading engine — orchestrates the full cycle:
   fetch data → analyse → generate signals → size position → execute.
 
-Features:
-  - Multi-symbol scanning with signal scoring
-  - ATR-based trailing stop (moves SL to breakeven after 1R profit)
-  - Cooldown after consecutive losses
-  - Only takes highest-scoring signals
+Supports scanning multiple symbols per cycle and picking the best signal.
 """
 
 from __future__ import annotations
@@ -18,10 +14,11 @@ from typing import List
 
 import ccxt
 
+from .candle_analysis import Trend, analyze_candles
 from .exchange import fetch_ohlcv, fetch_price, get_balance, place_market_order, set_leverage
-from .indicators import compute_indicators
 from .paper_wallet import PaperWallet
-from .risk import PositionPlan, RiskProfile, size_position
+from .risk import PositionPlan, RiskProfile, size_position, get_profile, DEFAULT_PROFILE
+from .round_levels import compute_round_levels, nearest_levels
 from .signals import Signal, generate_signals
 
 log = logging.getLogger("trader")
@@ -56,52 +53,14 @@ def _scan_symbol(
     df = fetch_ohlcv(exchange, symbol, timeframe=timeframe, limit=100)
     price = float(df["close"].iloc[-1])
 
+    stats = analyze_candles(df)
     signals = generate_signals(df, timeframe_minutes=tf_min)
 
-    if signals:
-        best = max(signals, key=lambda s: s.score)
-        log.info(
-            "  %-12s  Price=%10.4f  Signals=%d  Best=%s(score=%d)",
-            symbol, price, len(signals), best.direction, best.score,
-        )
-    else:
-        log.debug("  %-12s  Price=%10.4f  No signals", symbol, price)
+    log.info(
+        "  %-12s  Price=%10.2f  Trend=%-8s  Ratio=%.2f  Signals=%d",
+        symbol, price, stats.trend.value, stats.dominance_ratio, len(signals),
+    )
     return symbol, price, signals
-
-
-def _check_trailing_stop(wallet: PaperWallet, exchange: ccxt.Exchange) -> None:
-    """Move SL to breakeven+fees once price has moved 1× ATR in favor."""
-    for pos in wallet.open_positions:
-        try:
-            current_price = fetch_price(exchange, pos.symbol)
-        except Exception:
-            continue
-
-        entry = pos.entry_price
-        original_sl = pos.stop_loss
-
-        if pos.side == "long":
-            # If price moved up significantly, trail SL to breakeven
-            profit_pct = (current_price - entry) / entry
-            if profit_pct > 0.01:  # > 1% profit
-                # Move SL to entry + small buffer (breakeven + fees)
-                new_sl = entry * 1.002  # cover fees
-                if new_sl > original_sl:
-                    pos.stop_loss = round(new_sl, 6)
-                    log.info(
-                        "TRAIL #%d %s SL moved: %.4f → %.4f (breakeven)",
-                        pos.id, pos.symbol, original_sl, pos.stop_loss,
-                    )
-        else:  # short
-            profit_pct = (entry - current_price) / entry
-            if profit_pct > 0.01:
-                new_sl = entry * 0.998
-                if new_sl < original_sl:
-                    pos.stop_loss = round(new_sl, 6)
-                    log.info(
-                        "TRAIL #%d %s SL moved: %.4f → %.4f (breakeven)",
-                        pos.id, pos.symbol, original_sl, pos.stop_loss,
-                    )
 
 
 def _recent_consecutive_losses(wallet: PaperWallet) -> int:
@@ -126,14 +85,16 @@ def run_once(
     dry_run: bool = True,
     wallet: PaperWallet | None = None,
 ) -> list[TradeResult]:
-    """Run a single analysis + trade cycle across all symbols."""
+    """Run a single analysis + trade cycle across all symbols.
+
+    Scans every symbol, collects signals, filters by min R:R from profile,
+    picks the best one, and executes it.
+    """
     tf_min = _TF_MINUTES.get(timeframe, 15)
     paper_mode = wallet is not None
 
-    # 1a. Check open paper positions — trailing stop + SL/TP
+    # 1a. Check open paper positions against current prices
     if paper_mode and wallet.has_open_position:
-        _check_trailing_stop(wallet, exchange)
-
         for pos in wallet.open_positions:
             try:
                 current_price = fetch_price(exchange, pos.symbol)
@@ -157,9 +118,8 @@ def run_once(
         consec_losses = _recent_consecutive_losses(wallet)
         if consec_losses >= _MAX_CONSECUTIVE_LOSSES:
             log.warning(
-                "Cooldown: %d consecutive losses — skipping this cycle. "
-                "Will resume after %d idle cycles.",
-                consec_losses, _COOLDOWN_CYCLES,
+                "Cooldown: %d consecutive losses — skipping new signals this cycle.",
+                consec_losses,
             )
             return []
 
@@ -196,7 +156,7 @@ def run_once(
         log.warning("Zero or negative equity ($%.2f) — cannot trade.", equity)
         return []
 
-    # 4. Size positions, filter by min R:R, sort by score then R:R
+    # 4. Size positions, filter by min R:R from profile
     ranked: list[tuple[str, Signal, PositionPlan]] = []
     skipped_rr = 0
     for sym, sig in all_signals:
@@ -223,13 +183,13 @@ def run_once(
         log.info("No signals pass min R:R filter (%.1f).", profile.min_rr)
         return []
 
-    # Sort by signal score (primary), then R:R (secondary)
-    ranked.sort(key=lambda x: (x[1].score, x[2].risk_reward), reverse=True)
+    # Sort by risk:reward descending — best trade first
+    ranked.sort(key=lambda x: x[2].risk_reward, reverse=True)
     best_sym, best_sig, best_plan = ranked[0]
 
     log.info(
-        "BEST SIGNAL: %s %s | Score=%d R:R=%.1f | %s",
-        best_sym, best_sig.direction, best_sig.score, best_plan.risk_reward, best_sig.reason,
+        "BEST SIGNAL: %s %s | R:R=%.1f | %s",
+        best_sym, best_sig.direction, best_plan.risk_reward, best_sig.reason,
     )
     log.info(
         "Plan: side=%s  qty=%.6f  lev=%.1fx  risk=$%.2f (%.0f%% of $%.2f)",
@@ -238,7 +198,7 @@ def run_once(
     )
 
     if len(ranked) > 1:
-        log.info("(%d other signal(s) skipped — lower score/R:R)", len(ranked) - 1)
+        log.info("(%d other signal(s) skipped — lower R:R)", len(ranked) - 1)
 
     # 5. Execute the best signal
     order = None
@@ -295,30 +255,9 @@ def run_loop(
         len(symbols), timeframe, tf_seconds, mode_label, profile.name,
     )
 
-    cooldown_remaining = 0
-
     while True:
         try:
-            if cooldown_remaining > 0:
-                cooldown_remaining -= 1
-                log.info("Cooldown: %d cycle(s) remaining — watching positions only.", cooldown_remaining)
-                # Still check open positions during cooldown
-                if paper_mode and wallet.has_open_position:
-                    _check_trailing_stop(wallet, exchange)
-                    for pos in wallet.open_positions:
-                        try:
-                            current_price = fetch_price(exchange, pos.symbol)
-                            wallet.check_and_close(current_price, symbol=pos.symbol)
-                        except Exception:
-                            pass
-            else:
-                results = run_once(exchange, symbols, timeframe, profile, dry_run, wallet)
-
-                # Check if we need to enter cooldown
-                if paper_mode and not results:
-                    consec = _recent_consecutive_losses(wallet)
-                    if consec >= _MAX_CONSECUTIVE_LOSSES:
-                        cooldown_remaining = _COOLDOWN_CYCLES
+            run_once(exchange, symbols, timeframe, profile, dry_run, wallet)
 
             if paper_mode:
                 wallet.print_dashboard()
