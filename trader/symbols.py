@@ -1,12 +1,10 @@
 """
-Predefined symbol lists — top crypto, stocks, and precious metals.
+Predefined symbol lists — top crypto and precious metals.
 
-All symbols use the Bybit/Binance futures naming convention (SYMBOL/USDT).
-For stocks and metals — these are available as tokenized perpetuals on
-exchanges like Bybit or as CFDs.
+All symbols use the Bybit futures naming convention (SYMBOL/USDT).
 """
 
-# ── Top 100 Crypto by market cap ─────────────────────────────────────────
+# ── Top Crypto by market cap (verified on Bybit futures) ─────────────────
 CRYPTO_TOP_100 = [
     "BTC/USDT",
     "ETH/USDT",
@@ -19,7 +17,6 @@ CRYPTO_TOP_100 = [
     "DOT/USDT",
     "LINK/USDT",
     "TRX/USDT",
-    "MATIC/USDT",
     "SHIB/USDT",
     "LTC/USDT",
     "BCH/USDT",
@@ -37,11 +34,9 @@ CRYPTO_TOP_100 = [
     "HBAR/USDT",
     "INJ/USDT",
     "VET/USDT",
-    "MKR/USDT",
     "GRT/USDT",
     "RUNE/USDT",
     "THETA/USDT",
-    "FTM/USDT",
     "ALGO/USDT",
     "SEI/USDT",
     "SUI/USDT",
@@ -53,10 +48,7 @@ CRYPTO_TOP_100 = [
     "MANA/USDT",
     "EGLD/USDT",
     "XTZ/USDT",
-    "EOS/USDT",
     "KAVA/USDT",
-    "IOTA/USDT",
-    "NEO/USDT",
     "ZIL/USDT",
     "CRV/USDT",
     "LDO/USDT",
@@ -66,7 +58,6 @@ CRYPTO_TOP_100 = [
     "DYDX/USDT",
     "GMX/USDT",
     "BLUR/USDT",
-    "CFX/USDT",
     "GALA/USDT",
     "APE/USDT",
     "PEPE/USDT",
@@ -83,14 +74,11 @@ CRYPTO_TOP_100 = [
     "W/USDT",
     "ENA/USDT",
     "STRK/USDT",
-    "PIXEL/USDT",
     "MANTA/USDT",
     "DYM/USDT",
     "ONDO/USDT",
     "AR/USDT",
     "FET/USDT",
-    "RNDR/USDT",
-    "TAO/USDT",
     "KAS/USDT",
     "TON/USDT",
     "NOT/USDT",
@@ -106,28 +94,6 @@ CRYPTO_TOP_100 = [
     "XLM/USDT",
     "QNT/USDT",
     "ROSE/USDT",
-    "ZEC/USDT",
-    "DASH/USDT",
-]
-
-# ── Top Stocks (tokenized perpetuals / CFDs) ─────────────────────────────
-# Available on Bybit and some other exchanges as perpetual contracts
-STOCKS = [
-    "AAPL/USDT",
-    "MSFT/USDT",
-    "GOOGL/USDT",
-    "AMZN/USDT",
-    "NVDA/USDT",
-    "TSLA/USDT",
-    "META/USDT",
-    "AMD/USDT",
-    "NFLX/USDT",
-    "COIN/USDT",
-    "MSTR/USDT",
-    "GME/USDT",
-    "AMC/USDT",
-    "SPY/USDT",
-    "QQQ/USDT",
 ]
 
 # ── Precious Metals ──────────────────────────────────────────────────────
@@ -139,9 +105,8 @@ METALS = [
 # ── Combined preset lists ────────────────────────────────────────────────
 PRESETS = {
     "crypto":     CRYPTO_TOP_100,
-    "stocks":     STOCKS,
     "metals":     METALS,
-    "all":        CRYPTO_TOP_100 + STOCKS + METALS,
+    "all":        CRYPTO_TOP_100 + METALS,
     "top10":      CRYPTO_TOP_100[:10],
     "top20":      CRYPTO_TOP_100[:20],
     "top50":      CRYPTO_TOP_100[:50],
@@ -152,9 +117,9 @@ def resolve_symbols(spec: str) -> list[str]:
     """Resolve a symbol spec into a list of symbols.
 
     The spec can be:
-    - A preset name: "crypto", "stocks", "metals", "all", "top10", etc.
+    - A preset name: "crypto", "metals", "all", "top10", etc.
     - A comma-separated list: "BTC/USDT,ETH/USDT,SOL/USDT"
-    - A combination: "top10,stocks,metals" or "crypto,XAUUSDT"
+    - A combination: "top10,metals" or "crypto,XAUUSDT"
     """
     parts = [p.strip() for p in spec.split(",") if p.strip()]
     result: list[str] = []

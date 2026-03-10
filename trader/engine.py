@@ -80,6 +80,11 @@ def run_once(
         for pos in wallet.open_positions:
             try:
                 current_price = fetch_price(exchange, pos.symbol)
+                log.info(
+                    "SL/TP check #%d %s %s | price=%.4f | SL=%.4f TP=%.4f",
+                    pos.id, pos.side.upper(), pos.symbol,
+                    current_price, pos.stop_loss, pos.take_profit,
+                )
                 closed = wallet.check_and_close(current_price, symbol=pos.symbol)
                 for t in closed:
                     log.info(
